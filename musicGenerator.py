@@ -6,7 +6,7 @@ from bdx.bdx_01 import BdxConverter
 from bdx.AudioDownload import download_bv
 
 
-def music2midi(path, newpath):
+def music2mid(path, newpath):
     (audio, _) = load_audio(path, sr=sample_rate, mono=True)
     transcription = PianoTranscription(device="cpu")
     # 转换
@@ -19,6 +19,8 @@ class RedstoneMusic:
     类：转换器
     对象：绑定歌曲的转换器
     """
+    version="3.0.1"
+
     programs = {
         0: "harp",
         1: "harp",
@@ -153,19 +155,19 @@ class RedstoneMusic:
     def __init__(self,
                  audio_path="D:/WorkPlus/Charlie_Python/QQBot/Dan-Bot/Dan-src/plugins/mp3ToWorld/audio",
                  bdx_path="D:/WorkPlus/Charlie_Python/QQBot/Dan-Bot/Dan-src/plugins/mp3ToWorld/bdx",
-                 _midi_path="D:\WorkPlus\Charlie_Python\QQBot\Dan-Bot\Dan-src\plugins\mp3ToWorld\midi"
+                 _mid_path="D:\WorkPlus\Charlie_Python\QQBot\Dan-Bot\Dan-src\plugins\mp3ToWorld\mid"
                  ):
         """
 
         @param audio_path:
         @param bdx_path:
-        @param _midi_path:
+        @param _mid_path:
         """
         self.channel = -1
         self.basename = ""
-        self.midi_path = ""
-        self.midi = None
-        self._midi_path = _midi_path
+        self.mid_path = ""
+        self.mid = None
+        self._mid_path = _mid_path
         self.bdx_path = bdx_path
         self.audio_path = audio_path
         self.program = {}
@@ -173,7 +175,7 @@ class RedstoneMusic:
         self.tempo = 500000  # 默认tempo值，用来计算音符的实际间隔时间
         self.channel = -1
 
-    def midi2data_1(self, channel):
+    def mid2data_1(self, channel):
         """
 
         :return:
@@ -182,17 +184,22 @@ class RedstoneMusic:
         note_num = 0
         c_time = 0  # 用来抽走邪恶的零音量时间
         cache_time = 0  # 用来缓存间隔时间在1秒内的音符时间
-        for message in self.midi:  # 遍历midi事件
+        for message in self.mid:  # 遍历mid事件
             if hasattr(message, "channel"):  # 如果事件有channel属性
                 if not (message.channel in self.program):  # 如果这个channel不在program字典里
                     self.program[message.channel] = 0  # 这个channel的乐器（program）为0
             if message.type == "note_on":  # 如果是音符事件
-                self.notes += [{"midi_note": message.note,
-                                "midi_velocity": message.velocity,
+                self.notes += [{"mid_note": message.note,
+                                "mid_velocity": message.velocity,
                                 "note": round(2 ** ((message.note - 66) / 12), 6),
                                 "velocity": round(message.velocity / 127, 3),
                                 "time": 0,
-                                "program": self.program[message.channel]}]
+                                "tick": 0,
+                                "program": self.program[message.channel],
+                                "global_tick": 0,
+                                "global_time": 0,
+                                "type": "note"}
+                                ]
                 note_num += 1
             if self.notes.__len__() > 0:  # 如果音符数大于0
                 self.notes[-1]["time"] += message.time * (500000 / self.tempo) + c_time  # 最后一个音符的时间
@@ -200,8 +207,8 @@ class RedstoneMusic:
             if message.type != "note_on":  # 如果不是音符
                 if message.type == "set_tempo":  # 如果是set——tempo
                     self.tempo = message.tempo
-                if message.type == "program_change" and self.channel == -1:  # 如果是programchange的同时channel又是按原midi定的音色
-                    self.program[message.channel] = message.program  # 这个channel的program定位这个midi事件的program
+                if message.type == "program_change" and self.channel == -1:  # 如果是programchange的同时channel又是按原mid定的音色
+                    self.program[message.channel] = message.program  # 这个channel的program定位这个mid事件的program
                 elif hasattr(message, "channel"):  # 如果（不是programchange且channel不是-1）
                     if self.channel == -1:  # 无关是不是programchange
                         self.program[message.channel] = 0
@@ -218,16 +225,22 @@ class RedstoneMusic:
 
         for i, note in enumerate(self.notes):
             time = note["time"] + cache_time  # 此音符距离上一音符的间隔时间
-            if time == 0.05:  # 0.05 % 0.05 会变成 0 从而跳过这段延迟，所以不得不单独处理
+            # 0.05 % 0.05 会变成 0 从而跳过这段延迟，所以不得不单独处理,
+            # 至于为什么要加上0.025： 两个音符时间间隔大于半游戏刻 小于一游戏刻时 如果强行把两个音符放在一个游戏刻内 会显得比较突兀
+            if 0.025 < time <= 0.05:
+
                 self.notes[-1]["tick"] = 1  # 写入延迟
+                self.notes[i]["global_tick"] = self.notes[i - 1]["global_tick"]
                 cache_time = 0  # 清空缓存间隔时间
                 continue
+
             self.notes[i]["tick"] = round(time * 20 // 1)  # 此间隔时间换算后的游戏刻
             cache_time = time % 0.05
             if i > 0:
                 self.notes[i]["global_time"] = self.notes[i - 1]["global_time"] + self.notes[i]["time"]
             else:
                 self.notes[i]["global_time"] = self.notes[i]["time"]
+            self.notes[i]["global_tick"] = self.notes[i - 1]["global_tick"] + self.notes[i]["tick"]
             self.notes[i]["type"] = "note"
         # cache_time = 0za
         # for note in self.notes:
@@ -235,17 +248,23 @@ class RedstoneMusic:
         # for i in range(0, 11):
         #     self.notes.insert({"type": "progress", "progress": i}, self.notes.__len__() // 10 * i)
         # [print(i) for i in self.notes]
-        # import pygame.midi
+        # import pygame.mid
         # import time
-        # pygame.midi.init()
-        # player = pygame.midi.Output(0)
+        # pygame.mid.init()
+        # player = pygame.mid.Output(0)
         # player.set_instrument(0)
-        # for i in self.notes:
-        #     time.sleep(i["time"])
-        #     player.note_on(i["midi_note"], i["midi_velocity"])
-        # print(self.notes)
+        # for i, note in enumerate(self.notes):
+        #     if 0.025 < note["time"] <= 0.05:
+        #         pass
+        #     print(f"{note['tick']}, {note['global_tick']}")
+        #     time.sleep(self.notes[i]["tick"]/20)
+        #     player.note_on(self.notes[i]["mid_note"], self.notes[i]["mid_velocity"])
+
+        # [print(i) for i in self.notes]
         return self.notes.__len__()
         # 一个黑乐谱才220kb 根本不用担心（虽然已经很大了 但是懒得去想什么迭代器怎么整了
+
+
 
     def data2cb_1(self, song_name, **kwargs):
         """
@@ -297,11 +316,21 @@ class RedstoneMusic:
         """
         kwargs = kwargs["kwargs"]
         music_id = randint(-2147483646, 2147483646)
+
         self.notes.insert(0, {"type": "command",
                               "command": "tag @a remove MR_listen",
                               "customName": "By MoodyRhythm"})
         self.notes.insert(0, {"type": "command",
+                              "command": f"scoreboard players set @a[scores={{MR_music={music_id}}}, tag=MR_listen] MR_progress 0",
+                              "customName": "By MoodyRhythm"})
+        self.notes.insert(0, {"type": "command",
+                              "command": f"say @a[scores={{MR_music={music_id}}}] §7[{self.version}] 正在播放: {song_name}",
+                              "customName": "§7MoodyRhythm"})
+        self.notes.insert(0, {"type": "command",
                               "command": f"scoreboard players set @a[tag=MR_listen] MR_music {music_id}",
+                              "customName": "群号⑨⑥1⑦4⑧⑤0⑥"})
+        self.notes.insert(0, {"type": "command",
+                              "command": f"scoreboard objectives add MR_progress dummy",
                               "customName": "Have fun !"})
         self.notes.insert(0, {"type": "command",
                               "command": f"scoreboard objectives add MR_music dummy",
@@ -314,13 +343,14 @@ class RedstoneMusic:
         facing_z = facing_x = True  # 是否正方向
 
         for note in self.notes:
+            # print(note)
             if note["type"] == "progress":
                 blocks += [{"direction": [x, y, z],
                             "block_name": "chain_command_block",
                             "particular_value": 0,
                             "impluse": 1,
-                            "command": f'title @a[tag=show_progress, scores={{MR_music={music_id}}}] actionbar {{"rawtext":[{{"text"}}:"[{"|" * note["progress"] + "-" * (10 - note["progress"])}]"]}}',
-                            "customName": f"进度条：{10 * note['progress']}%",
+                            "command": f'title @a[scores={{MR_music={music_id}}}] actionbar {{"rawtext":[{{"text"}}:"MoodyRhythm\n"]}}',
+                            "customName": f"MR Charity",
                             "lastOutput": "",
                             "tickdelay": 0,
                             "executeOnFirstTick": 0,
@@ -333,9 +363,9 @@ class RedstoneMusic:
                             "block_name": "chain_command_block",
                             "particular_value": 0,
                             "impluse": 2,
-                            "command": f'execute @a[scores={{MR_music={music_id}}}] ~~1~ playsound note.{self.programs[note["program"]]} @s ~~~ {note["velocity"]} {note["note"]}',
-                            "customName": str(round(note["global_time"])),
-                            "lastOutput": "",
+                            "command": f'execute @a[scores={{MR_music={music_id}, MR_progress={note["global_tick"]}}}] ~~1~ playsound note.{self.programs[note["program"]]} @s ~~~ {note["velocity"]} {note["note"]}',
+                            "customName": "MoodyRhythm",
+                            "lastOutput": "By MoodyRhythm. 群号⑨⑥1⑦4⑧⑤0⑥，欢迎入群了解，可自定义任意音乐。",
                             "tickdelay": note["tick"],
                             "executeOnFirstTick": 0,
                             "trackOutput": 1,
@@ -396,17 +426,17 @@ class RedstoneMusic:
         print(blocks.__len__())
         return blocks, music_id
 
-    def midi2data_2(self, channel):
+    def mid2data_2(self, channel):
         self.channel = channel
         note_num = 0
         c_time = 0  # 用来抽走邪恶的零音量时间
-        for message in self.midi:
+        for message in self.mid:
             if hasattr(message, "channel"):
                 if not (message.channel in self.program):
                     self.program[message.channel] = 0
             if message.type == "note_on":
-                self.notes += [{"midi_note": message.note,
-                                "midi_velocity": message.velocity,
+                self.notes += [{"mid_note": message.note,
+                                "mid_velocity": message.velocity,
                                 "note": round(2 ** ((message.note - 66) / 12), 6),
                                 "velocity": round(message.velocity / 127, 3),
                                 "time": 0,
@@ -546,42 +576,38 @@ class RedstoneMusic:
         blocks[1]["conditional"] = 0
         return blocks, music_id
 
-    def midi2bdx(self, basename, kwargs):
-        print(kwargs)
+    def mid2bdx(self, basename, kwargs):
         if kwargs["way"] == "condition":
-            self.midi2data_1(kwargs["channel"])
+            self.mid2data_1(kwargs["channel"])
             blocks, music_id = self.data2cb_1(song_name=basename[0: 15], kwargs=kwargs)
         else:  # scb
-            self.midi2data_2(kwargs["channel"])
+            self.mid2data_2(kwargs["channel"])
             blocks, music_id = self.data2cb_2(song_name=basename[0: 15], kwargs=kwargs)
-        dir_name = f'{kwargs["id"]}-{basename}'
-        if not os.path.isdir(f"{self.bdx_path}/{dir_name}"):
-            os.mkdir(f"{self.bdx_path}/{dir_name}")
-        BdxConverter(f"{self.bdx_path}/{dir_name}/{kwargs['qq']}-{basename}.bdx", "Charlie_Ping", blocks)
-        return music_id, f"{self.bdx_path}/{dir_name}/{kwargs['qq']}-{basename}.bdx"
+        bdx_path = f"{self.bdx_path}//{basename}&MoodyRhythm.bdx"
+        BdxConverter(bdx_path, "MoodyRhythm", blocks)
+        return music_id, bdx_path
 
-    # def bdx_from_midi(self, midi_path, way="scb", length=15, width=15, channel=-1):
-    def bdx_from_mid(self, music_name, midi_path, kwargs):
+    def bdx_from_mid(self, music_name, mid_path, kwargs):
         """
                 :param music_name:
-                :param midi_path:
-                :param kwargs: way, length, width, channel, qq
+                :param mid_path:
+                :param kwargs: way, length, width, channel
                 :return:
                 """
-        self.midi = mido.MidiFile(midi_path)
-        music_id, bdx_path = self.midi2bdx(basename=music_name, kwargs=kwargs)
+        self.mid = mido.MidiFile(mid_path)
+        music_id, bdx_path = self.mid2bdx(basename=music_name, kwargs=kwargs)
         return music_id, bdx_path
 
     def bdx_from_audio(self, music_name, audio_path, kwargs):
         self.basename = music_name
 
-        midi_path = f"{self._midi_path}//{self.basename}.mid"
-        if not os.path.exists(midi_path):
+        mid_path = f"{self._mid_path}//{self.basename}.mid"
+        if not os.path.exists(mid_path):
             try:
-                self.midi_path = music2midi(audio_path, midi_path)
+                self.mid_path = music2mid(audio_path, mid_path)
             except BaseException as err:
                 raise err
-        music_id, bdx_path = self.bdx_from_midi(music_name, midi_path, kwargs=kwargs)
+        music_id, bdx_path = self.bdx_from_mid(music_name, mid_path, kwargs=kwargs)
         return music_id, bdx_path
 
     def bdx_from_bili(self, music_name, bvid, **kwargs):
@@ -598,13 +624,12 @@ class RedstoneMusic:
 
 
 if __name__ == '__main__':
-    # music = RedstoneMusic("D:/WorkPlus/Charlie_Python/QQBot/Dan-Bot/Dan-src/plugins/mp3ToWorld/midi/吱吱吱小吱 - 春节序曲（钢琴版）（Cover 交响曲）.mid")
-    # path = "D:/朝焼けのスターマイン 完整版扒带.mid"
-    # path = "D:/WorkPlus/Charlie_Python/QQBot/Dan-Bot/Dan-src/plugins/mp3ToWorld/midi/原神疾如猛火.mid"
-    # path = "D:\DataMessage\\1758489207\FileRecv\\victory.mid"
-    # path = "D:/WorkPlus/Charlie_Python/QQBot/Dan-Bot/Dan-src/plugins/mp3ToWorld/midi/千本樱钢琴清晰.mid"
-    # path = "D:/InstallPack/敢杀我的马.mid"
-    # path = "D:/DataMessage/1758489207/FileRecv/KakushintekiMetamaruphose!.mid"
     music = RedstoneMusic()
     # print(music.music2bdx("condition"))
-    print(music.bdx_from_bili("虹-二宫和也", "BV1px411Z7DV", way="scb", length=15, width=15, channel=-1, qq=1758489207))
+    kwargs = {"way":"condition", "length":15, "width":15, "channel":-1, "id":10}
+    # music.bdx_from_bili("The Kid LAROI--oskarpianist(BV15P4y1p7gJ)", "BV15P4y1p7gJ", way="condition", length=15, width=15, channel=-1, qq="MoodyRhythm", id=10)
+
+    music.bdx_from_audio("LOVETHING", "D:\DataMessage\\1758489207\FileRecv\LOVETHING.mp3", kwargs=kwargs)
+    # music.bdx_from_mid("crossing_field", "D:\WorkPlus\Charlie_Python\QQBot\Dan-Bot\Dan-src\plugins\mp3ToWorld\mid\crossing_field.mid", kwargs=kwargs)
+    # music = mido.midFile("D:\WorkPlus\Charlie_Python\QQBot\Dan-Bot\Dan-src\plugins\mp3ToWorld\mid\敢杀我的马.mid")
+    
